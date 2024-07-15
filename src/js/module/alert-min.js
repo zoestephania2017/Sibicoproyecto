@@ -1,0 +1,1 @@
+export function alert(t="",e="",n="success",o="OK",c=!1){swal({title:t,text:e,icon:n,button:o,dangerMode:c})}

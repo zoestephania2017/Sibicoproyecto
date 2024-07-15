@@ -1,0 +1,1 @@
+export function getUrlParameter(e){const t=window.location.search;return new URLSearchParams(t).get(e)}export function validateVariable(e){const t=getUrlParameter(e);return t?{exists:!0,value:t,isEmpty:""===t}:{exists:!1,value:null,isEmpty:!0}}
