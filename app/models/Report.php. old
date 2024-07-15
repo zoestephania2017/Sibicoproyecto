@@ -1,0 +1,283 @@
+<?php
+
+require __DIR__ . '/../../connection/Connection.php';
+require __DIR__ . '/../../app/utils/Session.php';
+require __DIR__ . '/../../app/models/Model.php';
+
+class Report extends Model
+{
+    protected $connection;
+    protected $session;
+
+    public function __construct()
+    {
+        $this->session = new Session();
+        $connection = new Connection();
+        $this->connection = $connection->getConnection();
+    }
+
+    public function getSales(): array
+    {
+        $query = "
+            SELECT 
+                fa.codigo_factura, 
+                fa.numero, 
+                fa.fecha_transaccion, 
+                fa.fecha_vencimiento, 
+                CONCAT(' ') AS articulo,
+                CONCAT(' ') AS cantidad,
+                fa.cliente, 
+                fa.responsable, 
+                fa.estado, 
+                fa.descuento, 
+                fa.impuesto, 
+                    (
+                        SELECT 
+                            SUM(fad.total) 
+                        FROM factura_avanzada_detalle AS fad 
+                        WHERE fad.codigo_factura_avanzada = fa.codigo_factura
+                    ) as sub_total, 
+                (
+                    (
+                        SELECT 
+                            SUM(fad.total) 
+                        FROM factura_avanzada_detalle AS fad 
+                        WHERE fad.codigo_factura_avanzada = fa.codigo_factura) - fa.descuento) + fa.impuesto as total 
+                            FROM factura_avanzada AS fa
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getSalesLimit($limit): array
+    {
+        $limit = $limit == 'all' ? '' : " LIMIT $limit ";
+
+        $query = "
+        SELECT 
+        fa.codigo_factura, 
+        fa.numero, 
+        fa.fecha_transaccion, 
+        fa.fecha_vencimiento, 
+        CONCAT(' ') AS articulo,
+        CONCAT(' ') AS cantidad,
+        fa.descuento, 
+        fa.impuesto, 
+            (
+                SELECT 
+                    SUM(fad.total) 
+                FROM factura_avanzada_detalle AS fad 
+                WHERE fad.codigo_factura_avanzada = fa.codigo_factura
+            ) as sub_total, 
+        (
+            (
+                SELECT 
+                    SUM(fad.total) 
+                FROM factura_avanzada_detalle AS fad 
+                WHERE fad.codigo_factura_avanzada = fa.codigo_factura) - fa.descuento) + fa.impuesto as total 
+                    FROM factura_avanzada AS fa
+            $limit
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getSalesByResponsible(string $responsible = null): array
+    {
+        $responsibleClause = '';
+
+        if ($responsible !== null && $responsible !== '' && $responsible !== 'null') {
+            $responsible = mysqli_real_escape_string($this->connection, $responsible);
+            $responsibleClause = " WHERE fa.responsable = '$responsible'";
+        }
+
+        $query = "
+            SELECT 
+                fa.codigo_factura, 
+                fa.numero, 
+                fa.fecha_transaccion, 
+                fa.fecha_vencimiento, 
+                fa.responsable, 
+                fa.impuesto, 
+                (
+                    SELECT SUM(fad.total) 
+                    FROM factura_avanzada_detalle AS fad 
+                    WHERE fad.codigo_factura_avanzada = fa.codigo_factura
+                ) as sub_total, (
+                    (
+                        SELECT SUM(fad.total) 
+                        FROM factura_avanzada_detalle AS fad 
+                        WHERE fad.codigo_factura_avanzada = fa.codigo_factura
+                    ) - fa.descuento) + fa.impuesto as total 
+                FROM factura_avanzada AS fa
+            $responsibleClause
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if ($result && mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getCuts(string $date = null): array
+    {
+        $dateClause = '';
+
+        if ($date !== null && $date !== '' && $date !== 'null') {
+            $date = mysqli_real_escape_string($this->connection, $date);
+            $dateClause = " WHERE fa.fecha_transaccion = '$date'";
+        }
+
+        $query = "
+            SELECT 
+                fa.codigo_factura, 
+                fa.numero, 
+                fa.fecha_transaccion, 
+                fa.fecha_vencimiento, 
+                fa.cliente, 
+                fa.responsable, 
+                fa.estado, 
+                fa.descuento, 
+                fa.impuesto, 
+                (
+                    SELECT SUM(fad.total) 
+                    FROM factura_avanzada_detalle AS fad 
+                    WHERE fad.codigo_factura_avanzada = fa.codigo_factura
+                ) as sub_total, (
+                    (
+                        SELECT SUM(fad.total) 
+                        FROM factura_avanzada_detalle AS fad 
+                        WHERE fad.codigo_factura_avanzada = fa.codigo_factura
+                    ) - fa.descuento) + fa.impuesto as total 
+                FROM factura_avanzada AS fa
+            $dateClause
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if ($result && mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getGenerals($number = null, $date = null, $expiration = null, $status = null): array
+    {
+        $query = "
+            SELECT 
+                fa.codigo_factura, 
+                fa.numero, 
+                fa.fecha_transaccion, 
+                fa.fecha_vencimiento, 
+                fa.cliente, 
+                fa.responsable, 
+                fa.estado, 
+                fa.descuento, 
+                fa.impuesto, 
+                (
+                    SELECT SUM(fad.total) 
+                    FROM factura_avanzada_detalle AS fad 
+                    WHERE fad.codigo_factura_avanzada = fa.codigo_factura
+                ) as sub_total, (
+                    (
+                        SELECT SUM(fad.total) 
+                        FROM factura_avanzada_detalle AS fad 
+                        WHERE fad.codigo_factura_avanzada = fa.codigo_factura
+                    ) - fa.descuento
+                ) + fa.impuesto as total 
+            FROM factura_avanzada AS fa
+        ";
+
+        $whereConditions = [];
+
+        if ($number !== null && $number !== '' && $number !== 'null') {
+            $whereConditions[] = " fa.numero = '$number'";
+        }
+
+        if ($date !== null && $date !== '' && $date !== 'null') {
+            $whereConditions[] = " fa.fecha_transaccion = '$date'";
+        }
+
+        if ($expiration !== null && $expiration !== '' && $expiration !== 'null') {
+            $whereConditions[] = " fa.fecha_vencimiento = '$expiration'";
+        }
+
+        if ($status !== null && $status !== '' && $status !== 'null') {
+            $whereConditions[] = " fa.estado = '$status'";
+        }
+
+        if (!empty($whereConditions) && count($whereConditions) > 0) {
+            $whereClause = implode(' AND ', $whereConditions);
+            $query .= " WHERE $whereClause";
+        }
+
+        $result = mysqli_query($this->connection, $query);
+
+        if ($result && mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getSession(): Session
+    {
+        return $this->session;
+    }
+
+    public function getConnection(): Connection
+    {
+        return $this->connection;
+    }
+
+    public function __destruct()
+    {
+        $this->connection->close();
+    }
+}

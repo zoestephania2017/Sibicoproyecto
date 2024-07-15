@@ -1,0 +1,169 @@
+<?php
+
+require __DIR__ . '/../utils/Request.php';
+require __DIR__ . '/../utils/Validator.php';
+require __DIR__ . '/../models/Stock.php';
+require __DIR__ . '/../utils/Protection.php';
+
+try {
+    $request = new Request();
+    $stock = new Stock();
+    $permissions = $stock->getSession()->get('access');
+
+    if ($permissions === null || !is_array($permissions)) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'A ocurrido un error, por favor refresque la página.'
+        ]);
+
+        exit;
+    }
+
+    $protection = new Protection($permissions);
+
+    if (!$protection->has('14')) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Acceso denegado.'
+        ]);
+
+        exit;
+    }
+
+    $request->addHeadersJSON();
+
+    if ($request->isPost()) {
+        $data = $request->getData();
+
+        $validator = new Validator($data['items']);
+
+        $errors = $validator->validateInArray([
+            'tipo' => 'required',
+            'codigo' => 'required',
+            'unidad' => 'required',
+            'peso' => 'required',
+            'medida' => 'required',
+            'cantidad' => 'required',
+            'serie' => 'required',
+            'precio_unidad' => 'required',
+        ]);
+
+        if (count($errors) > 0) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'Error de validación.',
+                'errors' => $errors
+            ]);
+
+            exit;
+        }
+
+        $response = $stock->createProduct($data['items']);
+
+        if ($response) {
+            echo json_encode([
+                'success' => true,
+                'message' => 'Producto creado correctamente.'
+            ]);
+
+            exit;
+        }
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'Al parecer no se ha podido crear el producto.',
+        ]);
+
+        exit;
+    }
+
+    if ($request->isPut()) {
+        $data = $request->getData();
+
+        $validator = new Validator($data);
+
+        $errors = $validator->validate([
+            'codigo' => 'required',
+            'cantidad' => 'required',
+            'cantidad_disponible' => 'required',
+            'precio' => 'required',
+        ]);
+
+        if (count($errors) > 0) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'Error de validación.',
+                'errors' => $errors
+            ]);
+
+            exit;
+        }
+
+        $response = $stock->addStockForProduct($data);
+
+        if ($response) {
+            echo json_encode([
+                'success' => true,
+                'message' => 'Existencias actualizadas correctamente.'
+            ]);
+
+            exit;
+        }
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'Al parecer no se ha podido actualizar las existencias del producto.',
+        ]);
+
+        exit;
+    }
+
+    if ($request->isGet()) {
+        $data = $request->getData();
+
+        if (isset($data['only'])) {
+            $stocks = $stock->getStocksOnly();
+
+            echo json_encode($stocks);
+
+            exit;
+        }
+
+        if (isset($data['type'])) {
+            $stocks = $stock->getTypeProduct();
+
+            echo json_encode($stocks);
+
+            exit;
+        }
+
+        if (isset($data['single'], $data['product'])) {
+            $product = $stock->getProduct($data['product']);
+
+            echo json_encode($product);
+
+            exit;
+        }
+
+        if (isset($data['kardex'], $data['product'])) {
+            $stocks = $stock->getKardex($data['product']);
+
+            echo json_encode($stocks);
+
+            exit;
+        }
+
+        $stocks = $stock->getStocks();
+
+        echo json_encode($stocks);
+
+        exit;
+    }
+} catch (\Throwable $th) {
+    echo json_encode([
+        'success' => false,
+        'message' => $th->getMessage(),
+    ]);
+
+    exit;
+}

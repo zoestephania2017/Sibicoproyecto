@@ -1,0 +1,571 @@
+/*
+
+<?php
+
+require __DIR__ . '/../../connection/Connection.php';
+require __DIR__ . '/../../app/utils/Session.php';
+require __DIR__ . '/../../app/models/Model.php';
+
+class Sale extends Model
+{
+    protected $table = 'factura';
+    protected $connection;
+    protected $session;
+
+    public function __construct()
+    {
+        $this->session = new Session();
+        $connection = new Connection();
+        $this->connection = $connection->getConnection();
+    }
+
+    public function getSales()
+    {
+        $wineryID = $this->session->get('winery');
+        $wineryID = $wineryID['codigo'];
+
+        $query = "
+            SELECT FA.* 
+            FROM factura_avanzada AS FA 
+            WHERE FA.tienda = '$wineryID' 
+            ORDER BY codigo_factura DESC
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function createSale($data): bool
+    {
+        try {
+            $this->connection->autocommit(false);
+
+            $wineryID = $this->session->get('winery');
+            $wineryID = $wineryID['codigo'];
+            $maxInvoiceID = $this->getMaxSaleForProceeding($data['tipo_documento'], $wineryID);
+            $maskWineryID = $this->createMask($wineryID, 3);
+            $maskProceedingID = $this->createMask($data['tipo_documento'], 3);
+
+            $number = implode(' - ', array($maskWineryID, $maskProceedingID, $maxInvoiceID));
+            $status = 'ACTIVO';
+            $date = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['fecha']));
+            $client = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['receptor']));
+            $responsible = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['emisor']));
+            $note = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['nota']));
+            $rtn = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['rtn']));
+            $position = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['cargo']));
+            $institutionID = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['codigo_institucion']));
+            $institution = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['institucion']));
+            $proceedingID = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['tipo_documento']));
+            $clientID = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['codigo_institucion']));
+            $phone = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['telefono']));
+
+            $query = "
+                INSERT INTO factura_avanzada (
+                    codigo_factura, numero, fecha_transaccion, fecha_vencimiento, cliente, responsable, estado, 
+                    nota, descuento, impuesto, impuesto_18, importe_exonerado, importe_exento, importe_gravado_15, 
+                    importe_gravado_18, total_pagar, rtn, direccion, telefono, tienda, cargo, codigo_institucion, 
+                    institucion, acta, codigo_cliente
+                )
+                VALUES (
+                    NULL, '$number', '$date', '$date', '$client', '$responsible', '$status', '$note', '0.0', '0.0', '0.0', 
+                    '0.0', '0.0', '0.0', '0.0', '0.0', '$rtn', 'N/A', '$phone', '$wineryID', '$position', 
+                    '$institutionID', '$institution', '$proceedingID', '$clientID'
+                );
+            ";
+
+            $result = mysqli_query($this->connection, $query);
+
+            if (!$result) {
+                throw new Exception(mysqli_error($this->connection));
+            }
+
+            $this->connection->commit(); // Confirmar la transacción
+            $this->connection->autocommit(true); // Habilitar el autocommit nuevamente
+
+            $resultOfCreateDetailSale = $this->createDetailSale($data['detalle'], $date);
+
+            return $resultOfCreateDetailSale;
+        } catch (Exception $e) {
+            $this->connection->rollback();
+            $this->connection->autocommit(true);
+
+            $this->set($e, ['session_id' => $this->session->getSessionID()]);
+
+            return false;
+        }
+    }
+
+    public function createDetailSale($data, $date): bool
+    {
+        try {
+            $this->connection->autocommit(false); // Deshabilitar el autocommit
+
+            $id = $this->getNextId('factura_avanzada_detalle', $this->connection, 'correlativo');
+            $invoiceID = $this->getNextId('factura_avanzada', $this->connection, 'codigo_factura') - 1;
+
+            $isOK = true;
+
+            foreach ($data as $item) {
+                $articleID = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['correlativo']));
+                $quantity = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['cantidad']));
+                $serie = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['serie']));
+                $description = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['descripcion']));
+                $price = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['precio_unidad']));
+                $discount = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['descuento']));
+                $total = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['total']));
+
+                $query = "
+                    INSERT INTO factura_avanzada_detalle(
+                        correlativo, codigo_factura_avanzada, codigo_articulo, cantidad, descripcion, precio_unidad, 
+                        descuento, total, serie, estado
+                    ) 
+                    VALUES ('$id', '$invoiceID', '$articleID', '$quantity', '$description', '$price', '$discount', '$total', '$serie', 'ACTIVO');
+                ";
+
+                $result = mysqli_query($this->connection, $query);
+
+                if (!$result) {
+                    throw new Exception(mysqli_error($this->connection));
+                }
+
+                $this->changeStatusSerie($articleID, $serie);
+                $this->createTransaction($quantity, $price, $date, $articleID, $description, 1, -1, $discount);
+
+                $id++;
+            }
+
+            $this->connection->commit(); // Confirmar la transacción
+            $this->connection->autocommit(true); // Habilitar el autocommit nuevamente
+
+            return $isOK;
+        } catch (Exception $e) {
+            $this->connection->rollback();
+            $this->connection->autocommit(true);
+
+            $this->set($e, ['session_id' => $this->session->getSessionID()]);
+
+            return false;
+        }
+    }
+
+    public function changeStatusSerie($articleID, $serie): bool
+    {
+        try {
+            $this->connection->autocommit(false); // Deshabilitar el autocommit
+
+            $query = "
+                UPDATE producto_serie  
+                SET estado = 'VENDIDO' 
+                WHERE codigo_producto = '$articleID' 
+                    AND serie = '$serie'  
+                    AND estado = 'ACTIVO'
+            ";
+
+            $result = mysqli_query($this->connection, $query);
+
+            if (!$result) {
+                throw new Exception(mysqli_error($this->connection));
+            }
+
+            $this->connection->commit(); // Confirmar la transacción
+            $this->connection->autocommit(true); // Habilitar el autocommit nuevamente
+
+            return true;
+        } catch (Exception $e) {
+            $this->connection->rollback();
+            $this->connection->autocommit(true);
+
+            $this->set($e, ['session_id' => $this->session->getSessionID()]);
+
+            return false;
+        }
+    }
+
+    private function createTransaction($quantity, $price, $date, $article, $description, $documentType, $documentID, $discount): bool
+    {
+        try {
+            $this->connection->autocommit(false);
+
+            $wineryID = $this->session->get('winery');
+            $wineryID = $wineryID['codigo'];
+            $id = $this->getNextId('transaccion', $this->connection, 'correlativo');
+            $quantityAccumulated = $this->getAccumulatedValue($article) + $quantity;
+            $total = $quantityAccumulated * $price;
+            $totalAccumulatedValue = $this->getTotalAccumulatedValue($article) + $total;
+            $valueUnitAccumulated = ($quantityAccumulated !== 0) ? $totalAccumulatedValue / $quantityAccumulated : 0;
+
+            $query = "INSERT INTO transaccion(correlativo, cantidad, precio_unidad, fecha_transaccion, codigo_producto, codigo_documento, tipo_documento, observaciones, cantidad_acum, valor_unidad_acum, valor_total_acum, descuento, precio_compra, tienda) VALUES 
+            ('$id', '$quantity', '$price', '$date', '$article', '$documentID', '$documentType', '$description', '$quantityAccumulated', '$valueUnitAccumulated', '$totalAccumulatedValue', '$discount', '$price', '$wineryID')";
+
+            $result = mysqli_query($this->connection, $query);
+
+            if (!$result) {
+                throw new Exception(mysqli_error($this->connection));
+            }
+
+            $this->connection->commit();
+            $this->connection->autocommit(true);
+
+            return true;
+        } catch (Exception $e) {
+            $this->connection->rollback();
+            $this->connection->autocommit(true);
+
+            $this->set($e, ['session_id' => $this->session->getSessionID()]);
+
+            return false;
+        }
+    }
+
+    private function getAccumulatedValue($article): int
+    {
+        $query = "
+            SELECT ts1.cantidad_acum AS acumulado
+            FROM transaccion AS ts1
+            WHERE ts1.correlativo = (
+                SELECT MAX(correlativo)
+                FROM transaccion
+                WHERE codigo_producto = '$article'
+            )
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $value = mysqli_fetch_assoc($result)['acumulado'];
+            return $value;
+        }
+
+        return 0;
+    }
+
+    private function getTotalAccumulatedValue($article): int
+    {
+        $query = "
+            SELECT ts1.valor_total_acum AS acumulado
+            FROM transaccion AS ts1
+            WHERE ts1.correlativo = (
+                SELECT MAX(correlativo)
+                FROM transaccion
+                WHERE codigo_producto = '$article'
+            )
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $value = mysqli_fetch_assoc($result)['acumulado'];
+            return $value;
+        }
+
+        return 0;
+    }
+
+    public function getMaxSaleForProceeding($proceeding, $wineryID): string
+    {
+        $query = "
+            select MAX(CAST(SUBSTRING_INDEX(numero,' - ', -1) as DECIMAL(11))) AS maxCodigo
+            FROM factura_avanzada  
+            WHERE tienda = '$wineryID' and acta = '$proceeding'
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $value = mysqli_fetch_assoc($result)['maxCodigo'];
+            return $this->createMask($value > 0 ? $value + 1 : 1);
+        }
+
+        return $this->createMask(1);
+    }
+
+    public function searchSeries($serie): array
+    {
+        $query = "
+            SELECT correlativo, serie 
+            FROM producto_serie 
+            LEFT JOIN producto ON (producto_serie.codigo_producto = producto.codigo)
+            WHERE serie LIKE '%$serie%'
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getSeries($value): array
+    {
+        $wineryID = $this->session->get('winery');
+        $wineryID = $wineryID['codigo'];
+
+        $query = "SELECT
+                correlativo,
+                cantidad_acum AS disponibilidad,
+                codigo_producto,
+                PR.imagen as imagen,
+                PR.codigo,
+                PR.nombre,
+                valor_unidad_acum
+            FROM
+                transaccion AS TR
+            LEFT JOIN
+                producto PR ON (PR.codigo = TR.codigo_producto AND PR.tienda = '$wineryID')
+            WHERE
+                TR.codigo_producto = (
+                    SELECT codigo_producto
+                    FROM producto_serie
+                    WHERE serie = '$value' AND codigo_producto = PR.codigo
+                )
+            AND
+                TR.tienda = '$wineryID'
+            AND
+                TR.correlativo = (
+                    SELECT MAX(TRA.correlativo)
+                    FROM transaccion AS TRA
+                    WHERE TRA.codigo_producto = TR.codigo_producto
+                )";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            $response[0]['descripcion'] = 'S/N:' . $value . '--COD:' . $response[0]['codigo'] . '--' . $response[0]['nombre'];
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function deleteSale($id): bool
+    {
+        try {
+            $this->connection->autocommit(false); // Deshabilitar el autocommit
+
+            $transaction = $this->getValuesForTransaction($id);
+
+            if ($transaction !== false) {
+                $query = "
+                    UPDATE factura_avanzada 
+                    SET estado='ANULADO' 
+                    WHERE codigo_factura = '$id'
+                ";
+
+                $result = mysqli_query($this->connection, $query);
+
+                if ($result) {
+                    $resultOfDeleteSerie = $this->deleteSerie($id);
+
+                    if ($resultOfDeleteSerie) {
+                        $this->connection->commit(); // Confirmar la transacción
+                        $this->connection->autocommit(true); // Habilitar el autocommit nuevamente
+
+                        return true;
+                    }
+                }
+            }
+
+            $this->connection->rollback();
+            $this->connection->autocommit(true);
+
+            return false;
+        } catch (Exception $e) {
+            $this->connection->rollback();
+            $this->connection->autocommit(true);
+
+            $this->set($e, ['session_id' => $this->session->getSessionID()]);
+
+            return false;
+        }
+    }
+
+    public function getSale($id): array
+    {
+        $query = "
+            SELECT fa.*, 
+                cl.codigo AS cod_cliente,
+                ti.codigo AS codigo_tienda,
+                ti.nombre AS nombre_tienda,
+                CONCAT(cl.nombre, ' ', cl.apellido) AS cliente_completo 
+            FROM factura_avanzada AS fa
+            LEFT JOIN clientes cl ON (cl.codigo = fa.codigo_cliente)
+            LEFT JOIN tienda AS ti ON (ti.codigo = fa.tienda) 
+            WHERE fa.codigo_factura = '$id'
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            $response[0] = mysqli_fetch_assoc($result);
+            $response[0]['details'] = $this->getSaleDetail($id);
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getExpiredSales(): array
+    {
+        $query = "
+            SELECT * FROM factura_avanzada 
+            WHERE fecha_vencimiento < CURDATE() 
+            ORDER BY codigo_factura
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getSaleDetail($id): array
+    {
+        $query = "
+            SELECT f.*, p.nombre AS nombre_producto
+            FROM factura_avanzada_detalle f
+            LEFT JOIN producto p ON f.codigo_articulo = p.codigo
+            WHERE f.codigo_factura_avanzada = '$id'
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function deleteSerie($id): bool
+    {
+        try {
+            $this->connection->autocommit(false);
+
+            $query = "
+                SELECT codigo_factura_avanzada, codigo_articulo, serie
+                FROM factura_avanzada_detalle 
+                WHERE codigo_factura_avanzada = '$id'
+            ";
+
+            $result = mysqli_query($this->connection, $query);
+
+            if (mysqli_num_rows($result) > 0) {
+                while ($serieRow = mysqli_fetch_assoc($result)) {
+                    $articleID = $serieRow['codigo_articulo'];
+                    $serie = $serieRow['serie'];
+
+                    $updateQuery = "
+                        UPDATE producto_serie 
+                        SET estado='ACTIVO' 
+                        WHERE codigo_producto = '$articleID' 
+                            AND serie = '$serie'
+                    ";
+
+                    $updateResult = mysqli_query($this->connection, $updateQuery);
+
+                    if (!$updateResult) {
+                        throw new Exception("Error updating product series: " . mysqli_error($this->connection));
+                    }
+                }
+
+                $this->connection->commit();
+                $this->connection->autocommit(true);
+
+                return true;
+            }
+
+            $this->connection->commit();
+            $this->connection->autocommit(true);
+
+            return false;
+        } catch (Exception $e) {
+            $this->connection->rollback();
+            $this->connection->autocommit(true);
+
+            $this->set($e, ['session_id' => $this->session->getSessionID()]);
+
+            return false;
+        }
+    }
+
+    public function getValuesForTransaction($id): array
+    {
+        $query = "
+            SELECT correlativo, tipo_documento, codigo_documento, codigo_producto, observaciones, precio_unidad, cantidad, cantidad_acum, fecha_transaccion
+            FROM transaccion 
+            WHERE tipo_documento = 2 
+                AND codigo_documento = '$id'
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = mysqli_fetch_assoc($result);
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getSession(): Session
+    {
+        return $this->session;
+    }
+
+    public function getConnection(): Connection
+    {
+        return $this->connection;
+    }
+
+    public function __destruct()
+    {
+        $this->connection->close();
+    }
+}
+

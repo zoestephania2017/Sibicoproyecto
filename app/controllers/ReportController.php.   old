@@ -1,0 +1,251 @@
+<!-- ReportController.php
+<?php
+
+// require __DIR__ . '/../utils/Request.php';
+// require __DIR__ . '/../utils/Validator.php';
+// require __DIR__ . '/../models/Report.php';
+// require __DIR__ . '/../utils/Protection.php';
+
+// require __DIR__ . '/../reports/report/pdf/SalesReportPDF.php';
+// require __DIR__ . '/../reports/report/pdf/ResponsibleReportPDF.php';
+// require __DIR__ . '/../reports/report/pdf/CutReportPDF.php';
+// require __DIR__ . '/../reports/report/pdf/GeneralReportPDF.php';
+
+// require __DIR__ . '/../reports/report/xml/SalesReportXML.php';
+// require __DIR__ . '/../reports/report/xml/CutReportXML.php';
+// require __DIR__ . '/../reports/report/xml/ResponsibleReportXML.php';
+// require __DIR__ . '/../reports/report/xml/GeneralReportXML.php';
+
+// require __DIR__ . '/../reports/report/xlsx/SalesReportXLSX.php';
+// require __DIR__ . '/../reports/report/xlsx/CutReportXLSX.php';
+// require __DIR__ . '/../reports/report/xlsx/ResponsibleReportXLSX.php';
+// require __DIR__ . '/../reports/report/xlsx/GeneralReportXLSX.php';
+
+// require __DIR__ . '/../reports/report/csv/SalesReportCSV.php';
+// require __DIR__ . '/../reports/report/csv/CutReportCSV.php';
+// require __DIR__ . '/../reports/report/csv/ResponsibleReportCSV.php';
+// require __DIR__ . '/../reports/report/csv/GeneralReportCSV.php';
+
+// try {
+//     $request = new Request();
+//     $report = new Report();
+//     $permissions = $report->getSession()->get('access');
+
+//     if ($permissions === null || !is_array($permissions)) {
+//         echo json_encode([
+//             'success' => false,
+//             'message' => 'A ocurrido un error, por favor refresque la página.'
+//         ]);
+
+//         exit;
+//     }
+
+//     $protection = new Protection($permissions);
+
+//     if (!$protection->has('15')) {
+//         echo json_encode([
+//             'success' => false,
+//             'message' => 'Acceso no autorizado',
+//         ]);
+//     }
+
+//     $data = $request->getData();
+
+//     if ($request->isGet()) {
+//         $isGet = isset($data['isGet']) ? $data['isGet'] : false;
+
+//         if ($isGet) {
+//             $get = isset($data['get']) ? $data['get'] : null;
+
+//             $request->addHeadersJSON();
+
+//             switch ($get) {
+//                 case 'sales':
+//                     $sales = $report->getSales();
+
+//                     echo json_encode($sales);
+
+//                     exit;
+//                 case 'responsible':
+//                     $responsible = $data['responsible'] ?? null;
+
+//                     $sales = $report->getSalesByResponsible($responsible);
+
+//                     echo json_encode($sales);
+
+//                     exit;
+//                 case 'cuts':
+//                     $date = isset($data['date']) ? $data['date'] : null;
+//                     $cuts = $report->getCuts($date);
+
+//                     echo json_encode($cuts);
+
+//                     exit;
+//                 case 'generals':
+//                     $number = isset($data['number']) ? $data['number'] : null;
+//                     $date = isset($data['date']) ? $data['date'] : null;
+//                     $expiration = isset($data['expiration']) ? $data['expiration'] : null;
+//                     $status = isset($data['status']) ? $data['status'] : null;
+
+//                     $generals = $report->getGenerals($number, $date, $expiration, $status);
+
+//                     echo json_encode($generals);
+
+//                     exit;
+//             }
+//         }
+
+//         $option = isset($data['option']) ? $data['option'] : null;
+
+//         switch ($option) {
+//             case 'pdf':
+//                 $category = isset($data['category']) ? $data['category'] : null;
+
+//                 switch ($category) {
+//                     case 'rpv':
+//                         $length = isset($data['limit']) ? $data['limit'] : 'all';
+
+//                         $salesReport = new SalesReportPDF($report);
+//                         $salesReport->AddPage('L');
+//                         $salesReport->generate($length);
+//                         $salesReport->Output('D', 'Reporte_de_ventas.pdf');
+//                         exit;
+//                     case 'rpr':
+//                         $responsible = isset($data['responsible']) ? $data['responsible'] : null;
+
+//                         $responsibleReport = new ResponsibleReportPDF($report);
+//                         $responsibleReport->AddPage('L');
+//                         $responsibleReport->generate($responsible);
+//                         $responsibleReport->Output('D', 'Reporte_de_ventas_por_responsable.pdf');
+//                         exit;
+//                     case 'rpc':
+//                         $date = isset($data['date']) ? $data['date'] : null;
+
+//                         $cutReport = new CutReportPDF($report);
+//                         $cutReport->AddPage('L');
+//                         $cutReport->generate($date);
+//                         $cutReport->Output('I', 'Reporte_de_corte_diario.pdf');
+//                         exit;
+//                     case 'rpg':
+//                         $number = isset($data['number']) ? $data['number'] : null;
+//                         $date = isset($data['date']) ? $data['date'] : null;
+//                         $expiration = isset($data['expiration']) ? $data['expiration'] : null;
+//                         $status = isset($data['status']) ? $data['status'] : null;
+
+//                         $generalReport = new GeneralReportPDF($report);
+//                         $generalReport->AddPage('L');
+//                         $generalReport->generate($number, $date, $expiration, $status);
+//                         $generalReport->Output('I', 'Reporte_general.pdf');
+//                         exit;
+//                 }
+//                 break;
+//             case 'xlsx':
+//                 $category = isset($data['category']) ? $data['category'] : null;
+
+//                 switch ($category) {
+//                     case 'rpv':
+//                         $length = isset($data['limit']) ? $data['limit'] : 'all';
+
+//                         $salesReport = new SalesReportXLSX($report);
+//                         $salesReport->generate($length);
+//                         exit;
+//                     case 'rpr':
+//                         $responsible = isset($data['responsible']) ? $data['responsible'] : null;
+
+//                         $responsibleReport = new ResponsibleReportXLSX($report);
+//                         $responsibleReport->generate($responsible);
+//                         exit;
+//                     case 'rpc':
+//                         $date = isset($data['date']) ? $data['date'] : null;
+
+//                         $cutReport = new CutReportXLSX($report);
+//                         $cutReport->generate($date);
+//                         exit;
+//                     case 'rpg':
+//                         $number = isset($data['number']) ? $data['number'] : null;
+//                         $date = isset($data['date']) ? $data['date'] : null;
+//                         $expiration = isset($data['expiration']) ? $data['expiration'] : null;
+//                         $status = isset($data['status']) ? $data['status'] : null;
+
+//                         $generalReport = new GeneralReportXLSX($report);
+//                         $generalReport->generate($number, $date, $expiration, $status);
+//                         exit;
+//                 }
+//                 break;
+//             case 'csv':
+//                 $category = isset($data['category']) ? $data['category'] : null;
+
+//                 switch ($category) {
+//                     case 'rpv':
+//                         $length = isset($data['limit']) ? $data['limit'] : 'all';
+
+//                         $salesReport = new SalesReportCSV($report);
+//                         $salesReport->generate($length);
+//                         exit;
+//                     case 'rpr':
+//                         $responsible = isset($data['responsible']) ? $data['responsible'] : null;
+
+//                         $responsibleReport = new ResponsibleReportCSV($report);
+//                         $responsibleReport->generate($responsible);
+//                         exit;
+//                     case 'rpc':
+//                         $date = isset($data['date']) ? $data['date'] : null;
+
+//                         $cutReport = new CutReportCSV($report);
+//                         $cutReport->generate($date);
+//                         exit;
+//                     case 'rpg':
+//                         $number = isset($data['number']) ? $data['number'] : null;
+//                         $date = isset($data['date']) ? $data['date'] : null;
+//                         $expiration = isset($data['expiration']) ? $data['expiration'] : null;
+//                         $status = isset($data['status']) ? $data['status'] : null;
+
+//                         $generalReport = new GeneralReportCSV($report);
+//                         $generalReport->generate($number, $date, $expiration, $status);
+//                         exit;
+//                 }
+//                 break;
+//             case 'xml':
+//                 $category = isset($data['category']) ? $data['category'] : null;
+
+//                 switch ($category) {
+//                     case 'rpv':
+//                         $length = isset($data['limit']) ? $data['limit'] : 'all';
+
+//                         $salesReport = new SalesReportXML($report);
+//                         $salesReport->generate($length);
+//                         exit;
+//                     case 'rpr':
+//                         $responsible = isset($data['responsible']) ? $data['responsible'] : null;
+
+//                         $responsibleReport = new ResponsibleReportXML($report);
+//                         $responsibleReport->generate($responsible);
+//                         exit;
+//                     case 'rpc':
+//                         $date = isset($data['date']) ? $data['date'] : null;
+
+//                         $cutReport = new CutReportXML($report);
+//                         $cutReport->generate($date);
+//                         exit;
+//                     case 'rpg':
+//                         $number = isset($data['number']) ? $data['number'] : null;
+//                         $date = isset($data['date']) ? $data['date'] : null;
+//                         $expiration = isset($data['expiration']) ? $data['expiration'] : null;
+//                         $status = isset($data['status']) ? $data['status'] : null;
+
+//                         $generalReport = new GeneralReportXML($report);
+//                         $generalReport->generate($number, $date, $expiration, $status);
+//                         exit;
+//                 }
+//                 break;
+//             default:
+//         }
+//     }
+// } catch (\Throwable $th) {
+//     echo json_encode([
+//         'success' => false,
+//         'message' => $th->getMessage(),
+//     ]);
+
+//     exit;
+// }

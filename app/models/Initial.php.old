@@ -1,0 +1,235 @@
+<?php
+
+require __DIR__ . '/../../connection/Connection.php';
+require __DIR__ . '/../../app/utils/Session.php';
+require __DIR__ . '/../../app/models/Model.php';
+
+class Initial extends Model
+{
+    protected $table = 'producto';
+    protected $connection;
+    protected $session;
+
+    public function __construct()
+    {
+        $this->session = new Session();
+        $connection = new Connection();
+        $this->connection = $connection->getConnection();
+    }
+
+    public function createInitial($items): bool
+    {
+        $id = $this->getNextId($this->table, $this->connection);
+        $image = 'sinimagen.jpg';
+        $wineryID = $this->session->get('winery');
+        $wineryID = $wineryID['codigo'];
+
+        try {
+            $this->connection->autocommit(false);
+
+            foreach ($items as $item) {
+                $year = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['yearID']));
+                $type = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['typeID']));
+                $side = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['sideID']));
+                $article = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['article']));
+                $price = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['price']));
+                $quantity = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['quantity'])) ?? 'N/A';
+
+                $query = "
+                    INSERT INTO $this->table 
+                        (codigo, nombre, precio, disponibilidad, imagen, 
+                        anio, tipo_producto, ubicacion_producto, tienda, 
+                        unidad, peso, volumen)
+                    VALUES
+                        ('$id', '$article', '$price', '$quantity', '$image',
+                        '$year', '$type', '$side', '$wineryID', 'unidades', '0', '0')
+                ";
+
+                $result = mysqli_query($this->connection, $query);
+
+                if (!$result) {
+                    throw new Exception(mysqli_error($this->connection));
+                }
+
+                $this->createTransaction($quantity, $price, date('Y-m-d'), $article, $item['description'], 1, -1, 0);
+
+                $id++;
+            }
+
+            $this->connection->commit();
+            $this->connection->autocommit(true);
+
+            return true;
+        } catch (\Exception $e) {
+            $this->connection->rollback();
+            $this->connection->autocommit(true);
+
+            $this->set($e, ['session_id' => $this->session->getSessionID()]);
+
+            return false;
+        }
+    }
+
+    public function getModels($brand): array
+    {
+        $query = "
+            SELECT codigo, nombre_modelo 
+            FROM modelo 
+                WHERE codigo_marca = '$brand'
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getYears($model): array
+    {
+        $query = "
+            SELECT codigo, nombre 
+            FROM anio 
+                WHERE codigo_modelo = '$model'
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+        }
+
+        return $response;
+    }
+
+    public function getTypes(): array
+    {
+        $query = "SELECT codigo_tipo_producto, nombre_tipo_producto FROM tipo_producto";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getSides(): array
+    {
+        $query = "SELECT * FROM ubicacion_producto";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    private function createTransaction($quantity, $price, $date, $article, $description, $documentType, $documentID, $discount): bool
+    {
+        try {
+            $this->connection->autocommit(false);
+
+            $wineryID = $this->session->get('winery');
+            $wineryID = $wineryID['codigo'];
+            $id = $this->getNextId('transaccion', $this->connection, 'correlativo');
+            $quantityAccumulated = $this->getAccumulatedValue($article) + $quantity;
+            $total = $quantityAccumulated * $price;
+            $totalAccumulatedValue = $this->getTotalAccumulatedValue($article) + $total;
+            $valueUnitAccumulated = $totalAccumulatedValue / $quantityAccumulated;
+
+            $query = "INSERT INTO transaccion(correlativo, cantidad, precio_unidad, fecha_transaccion, codigo_producto, codigo_documento, tipo_documento, observaciones, cantidad_acum, valor_unidad_acum, valor_total_acum, descuento, precio_compra, tienda) VALUES 
+            ('$id', '$quantity', '$price', '$date', '$article', '$documentID', '$documentType', '$description', '$quantityAccumulated', '$valueUnitAccumulated', '$totalAccumulatedValue', '$discount', '$price', '$wineryID')";
+
+            $result = mysqli_query($this->connection, $query);
+
+            if (!$result) {
+                throw new Exception(mysqli_error($this->connection));
+            }
+
+            $this->connection->commit();
+            $this->connection->autocommit(true);
+
+            return true;
+        } catch (Exception $e) {
+            $this->connection->rollback();
+            $this->connection->autocommit(true);
+
+            $this->set($e, ['session_id' => $this->session->getSessionID()]);
+
+            return false;
+        }
+    }
+
+    private function getAccumulatedValue($article): int
+    {
+        $query = "SELECT ts1.cantidad_acum AS acumulado FROM transaccion AS ts1 WHERE ts1.correlativo = (SELECT MAX(correlativo) FROM transaccion WHERE codigo_producto = '$article')";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $value = mysqli_fetch_assoc($result)['acumulado'];
+
+            return $value;
+        }
+
+        return 0;
+    }
+
+    private function getTotalAccumulatedValue($article): int
+    {
+        $query = "SELECT ts1.valor_total_acum AS acumulado FROM transaccion AS ts1 WHERE ts1.correlativo = (SELECT MAX(correlativo) FROM transaccion WHERE codigo_producto = '$article')";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $value = mysqli_fetch_assoc($result)['acumulado'];
+
+            return $value;
+        }
+
+        return 0;
+    }
+
+    public function getSession(): Session
+    {
+        return $this->session;
+    }
+
+    public function getConnection(): Connection
+    {
+        return $this->connection;
+    }
+
+    public function __destruct()
+    {
+        $this->connection->close();
+    }
+}

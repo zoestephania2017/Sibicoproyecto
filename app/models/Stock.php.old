@@ -1,0 +1,406 @@
+<?php
+
+require __DIR__ . '/../../connection/Connection.php';
+require __DIR__ . '/../../app/utils/Session.php';
+require __DIR__ . '/../../app/models/Model.php';
+require __DIR__ . '/../../app/utils/Cache.php';
+
+class Stock extends Model
+{
+    protected $connection;
+    protected $session;
+    protected $cache;
+
+    public function __construct()
+    {
+        $this->cache = new Cache();
+        $this->session = new Session();
+        $connection = new Connection();
+        $this->connection = $connection->getConnection();
+    }
+
+    public function getStocks()
+    {
+        $wineryID = $this->session->get('winery');
+        $wineryID = $wineryID['codigo'];
+
+        $query = "
+            SELECT 
+                PR.codigo AS codigo_articulo, 
+                PR.nombre AS nombre_articulo,
+                Mar.nombre_marca AS marca,
+                Mo.nombre_modelo AS modelo,
+                An.nombre AS anio, 
+                TP.nombre_tipo_producto AS tipo, 
+                PR.fecha_vencimiento, 
+                TR.cantidad_acum AS disponibilidad, 
+                TR.correlativo AS correlativo_inventario,
+                PR.imagen,
+                PS.serie 
+            FROM producto AS PR
+            LEFT JOIN (
+                SELECT codigo_producto, MAX(correlativo) AS max_correlativo
+                FROM transaccion
+                GROUP BY codigo_producto
+            ) AS MaxTR ON PR.codigo = MaxTR.codigo_producto
+            LEFT JOIN transaccion AS TR ON PR.codigo = TR.codigo_producto AND TR.correlativo = MaxTR.max_correlativo
+            LEFT JOIN anio AS An ON PR.anio = An.codigo
+            LEFT JOIN modelo AS Mo ON An.codigo_modelo = Mo.codigo
+            LEFT JOIN marca AS Mar ON Mo.codigo_marca = Mar.codigo
+            LEFT JOIN tipo_producto AS TP ON TP.codigo_tipo_producto = PR.tipo_producto
+            LEFT JOIN producto_serie AS PS ON PS.codigo_producto = PR.codigo
+            WHERE PR.tienda = '$wineryID'
+            ORDER BY marca, modelo, anio, codigo_articulo, tipo DESC
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getStocksOnly()
+    {
+        $query = "
+            SELECT nombre, producto_serie.serie AS serie, codigo, CONCAT(serie, ' - ', nombre) AS descripcion
+            FROM producto  
+            LEFT JOIN producto_serie  
+                ON (producto.codigo = producto_serie.codigo_producto)
+                GROUP BY 1,2
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getProduct($product): array
+    {
+
+        $query = "
+            SELECT *
+            FROM producto  
+            LEFT JOIN producto_serie  
+                ON (producto.codigo = producto_serie.codigo_producto)
+            WHERE codigo = '$product'
+                GROUP BY 1,2
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getTypeProduct()
+    {
+        $query = "SELECT codigo_tipo_producto AS codigo, nombre_tipo_producto AS nombre FROM tipo_producto";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function getKardex($product): array
+    {
+        $wineryID = $this->session->get('winery');
+        $wineryID = $wineryID['codigo'];
+
+        $query = "
+            SELECT 
+                P.nombre,
+                T.fecha_transaccion,
+                TD.nombre_tipo_documento,
+                T.codigo_documento,
+                T.cantidad,
+                T.precio_unidad,
+                T.observaciones,
+                T.cantidad_acum,
+                T.valor_unidad_acum,
+                T.valor_total_acum 
+            FROM transaccion AS T 
+            LEFT JOIN tipo_documento AS TD 
+                ON (TD.codigo_tipo_documento=T.tipo_documento)
+            LEFT JOIN producto AS P 
+                ON (T.codigo_producto= P.codigo)
+            WHERE T.codigo_producto = '$product'  
+                AND T.tienda =  '$wineryID'
+                ORDER BY T.fecha_transaccion ASC
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $response = [];
+
+            while ($row = mysqli_fetch_assoc($result)) {
+                $response[] = $row;
+            }
+
+            return $response;
+        }
+
+        return [];
+    }
+
+    public function createProduct($data): bool
+    {
+        try {
+            $this->connection->autocommit(false);
+
+            $wineryID = $this->session->get('winery');
+            $wineryID = $wineryID['codigo'];
+            $id = $this->getNextId('producto', $this->connection, 'codigo');
+
+            foreach ($data as $item) {
+                $article = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['articulo']));
+                $price = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['precio_unidad']));
+                $quantity = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['cantidad']));
+                $image = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['imagen']));
+                $type = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['tipo']));
+                $location = 1;
+                $unity = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['unidad']));
+                $weight = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['peso']));
+                $volume = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['medida']));
+                $serie = htmlspecialchars(mysqli_real_escape_string($this->connection, $item['serie']));
+                $expiration = $item['fecha_vencimiento'];
+
+                $query = "
+                    INSERT INTO producto
+                        (codigo, nombre, precio, disponibilidad, imagen, anio, tipo_producto, ubicacion_producto, tienda, unidad, peso, volumen, fecha_vencimiento) 
+                    VALUES ('$id', '$article', '$price', '$quantity', '$image', '0', '$type', '$location', '$wineryID', '$unity', '$weight', '$volume', '$expiration')
+                ";
+
+                $result = mysqli_query($this->connection, $query);
+
+                if (!$result) {
+                    throw new Exception(mysqli_error($this->connection));
+                }
+
+                if ($serie != 'N/A') {
+                    $this->createSerie($id, $serie, $image);
+                }
+
+                $date = date("Y-m-d");
+                $valueUnitAccumulated = $price;
+                $valueTotalAccumulated = $quantity * $price;
+
+                $this->createTransaction($quantity, $price, $date, $id, 'Inventario inicial', '3', '-1', 0, $valueUnitAccumulated, $valueTotalAccumulated);
+
+                $id++;
+            }
+
+            $this->connection->commit();
+            $this->connection->autocommit(true);
+
+            return true;
+        } catch (Exception $e) {
+            $this->connection->rollback();
+            $this->connection->autocommit(true);
+
+            $this->set($e, ['session_id' => $this->session->getSessionID()]);
+
+            return false;
+        }
+    }
+
+    public function addStockForProduct($data): bool
+    {
+        $quantity = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['cantidad']));
+        $price = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['precio']));
+        $date = date("Y-m-d");
+        $article = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['codigo']));
+        $description = htmlspecialchars(mysqli_real_escape_string($this->connection, $data['descripcion']));
+        $totalAccumulated = $this->getTotalAccumulatedValue($article) + $quantity * $price;
+
+        $result = $this->createTransaction($quantity, $price, $date, $article, $description, '3', '-1', 0, $price, $totalAccumulated);
+
+        return $result;
+    }
+
+    private function createTransaction($quantity, $price, $date, $article, $description, $documentType, $documentID, $discount, $valueUnitAccumulated, $totalAccumulated): bool
+    {
+        try {
+            $this->connection->autocommit(false);
+
+            $wineryID = $this->session->get('winery');
+            $wineryID = $wineryID['codigo'];
+            $id = $this->getNextId('transaccion', $this->connection, 'correlativo');
+            $quantityAccumulated = $this->getAccumulatedValue($article) + $quantity;
+
+            $query = "
+                INSERT INTO transaccion 
+                    (correlativo, cantidad, precio_unidad, fecha_transaccion, codigo_producto, codigo_documento, tipo_documento, observaciones, cantidad_acum, valor_unidad_acum, valor_total_acum, descuento, precio_compra, tienda) 
+                VALUES 
+                    ('$id', '$quantity', '$price', '$date', '$article', '$documentID', '$documentType', '$description', '$quantityAccumulated', '$valueUnitAccumulated', '$totalAccumulated', '$discount', '$price', '$wineryID')
+            ";
+
+            $result = mysqli_query($this->connection, $query);
+
+            if (!$result) {
+                throw new Exception(mysqli_error($this->connection));
+            }
+
+            $this->connection->commit();
+            $this->connection->autocommit(true);
+
+            return true;
+        } catch (Exception $e) {
+            $this->connection->rollback();
+            $this->connection->autocommit(true);
+
+            $this->set($e, ['session_id' => $this->session->getSessionID()]);
+
+            return false;
+        }
+    }
+
+    private function getAccumulatedValue($article): int
+    {
+        $query = "
+            SELECT ts1.cantidad_acum AS acumulado
+            FROM transaccion AS ts1
+            WHERE ts1.correlativo = (
+                SELECT MAX(correlativo)
+                FROM transaccion
+                WHERE codigo_producto = '$article'
+            )
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $value = mysqli_fetch_assoc($result)['acumulado'];
+            return $value;
+        }
+
+        return 0;
+    }
+
+    private function getUnitValueAccumulated($article): int
+    {
+        $query = "
+            SELECT ts1.valor_unidad_acum AS acumulado
+            FROM transaccion AS ts1
+            WHERE ts1.correlativo = (
+                SELECT MAX(correlativo)
+                FROM transaccion
+                WHERE codigo_producto = '$article'
+            )
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $value = mysqli_fetch_assoc($result)['acumulado'];
+            return $value;
+        }
+
+        return 0;
+    }
+
+    private function getTotalAccumulatedValue($article): int
+    {
+        $query = "
+            SELECT ts1.valor_total_acum AS acumulado
+            FROM transaccion AS ts1
+            WHERE ts1.correlativo = (
+                SELECT MAX(correlativo)
+                FROM transaccion
+                WHERE codigo_producto = '$article'
+            )
+        ";
+
+        $result = mysqli_query($this->connection, $query);
+
+        if (mysqli_num_rows($result) > 0) {
+            $value = mysqli_fetch_assoc($result)['acumulado'];
+            return $value;
+        }
+
+        return 0;
+    }
+
+    public function createSerie($productID, $serie, $image): bool
+    {
+        try {
+            $this->connection->autocommit(false);
+
+            $id = $this->getNextId('producto_serie', $this->connection, 'correlativo');
+
+            $query = "
+                INSERT INTO producto_serie
+                    (correlativo, codigo_producto, serie, imagen, estado) 
+                VALUES ('$id', '$productID', '$serie', '$image', 'ACTIVO')
+            ";
+
+            $result = mysqli_query($this->connection, $query);
+
+            if (!$result) {
+                throw new Exception(mysqli_error($this->connection));
+            }
+
+            return true;
+        } catch (Exception $e) {
+            $this->connection->rollback();
+            $this->connection->autocommit(true);
+
+            $this->set($e, ['session_id' => $this->session->getSessionID()]);
+
+            return false;
+        }
+    }
+
+    public function getSession(): Session
+    {
+        return $this->session;
+    }
+
+    public function getConnection(): Connection
+    {
+        return $this->connection;
+    }
+
+    public function __destruct()
+    {
+        $this->connection->close();
+    }
+}

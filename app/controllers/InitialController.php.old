@@ -1,0 +1,123 @@
+<?php
+
+
+require __DIR__ . '/../utils/Request.php';
+require __DIR__ . '/../utils/Validator.php';
+require __DIR__ . '/../models/Initial.php';
+require __DIR__ . '/../utils/Protection.php';
+
+try {
+    $request = new Request();
+    $initial = new Initial();
+    $permissions = $initial->getSession()->get('access');
+
+    if ($permissions === null || !is_array($permissions)) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'A ocurrido un error, por favor refresque la página.'
+        ]);
+
+        exit;
+    }
+
+    $protection = new Protection($permissions);
+
+    if (!$protection->has('13')) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Acceso denegado.'
+        ]);
+
+        exit;
+    }
+
+    $request->addHeadersJSON();
+
+    if ($request->isPost()) {
+        $data = $request->getData();
+
+        $validator = new Validator($data);
+
+        $errors = $validator->validateInArray([
+            'brandID' => 'required',
+            'modelID' => 'required',
+            'yearID' => 'required',
+            'typeID' => 'required',
+            'sideID' => 'required',
+            'article' => 'required',
+            'price' => 'required',
+            'quantity' => 'required',
+        ]);
+
+        if (count($errors) > 0) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'Error de validación',
+                'errors' => $errors
+            ]);
+
+            exit;
+        }
+
+        $response = $initial->createInitial($data);
+
+        if ($response) {
+            echo json_encode([
+                'success' => true,
+                'message' => 'Inventario inicial creado correctamente.'
+            ]);
+
+            exit;
+        }
+
+        echo json_encode([
+            'success' => false,
+            'message' => 'Error al crear el inventario inicial.'
+        ]);
+
+        exit;
+    }
+
+    if ($request->isGet()) {
+        $data = $request->getData();
+
+        if (isset($data['side'])) {
+            $sides = $initial->getSides();
+
+            echo json_encode($sides);
+
+            exit;
+        }
+
+        if (isset($data['model']) && !empty($data['model'])) {
+            $models = $initial->getModels($data['model']);
+
+            echo json_encode($models);
+
+            exit;
+        }
+
+        if (isset($data['year']) && !empty($data['year'])) {
+            $years = $initial->getYears($data['year']);
+
+            echo json_encode($years);
+
+            exit;
+        }
+
+        if (isset($data['type'])) {
+            $types = $initial->getTypes();
+
+            echo json_encode($types);
+
+            exit;
+        }
+    }
+} catch (\Throwable $th) {
+    echo json_encode([
+        'success' => false,
+        'message' => $th->getMessage(),
+    ]);
+
+    exit;
+}
