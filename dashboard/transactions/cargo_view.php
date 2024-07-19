@@ -210,7 +210,7 @@ if (!isset($protection) || !$protection->has("8")) {
                 </div>
             </div>
             <div class="form-actions">
-                <button type="submit">CARGOS</button>
+                <button type="submit">CARGOS LISTOS</button>
             </div>
         </form>
     </div>
